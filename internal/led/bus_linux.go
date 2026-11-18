@@ -5,6 +5,7 @@ package led
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"syscall"
@@ -30,7 +31,10 @@ type ioctlData struct {
 	Size      uint32
 	Data      *[34]byte
 }
-type linuxBus struct{ f *os.File }
+type linuxBus struct {
+	f          *os.File
+	splitReads bool
+}
 
 func ioctlPointer(fd uintptr, req uintptr, arg unsafe.Pointer) error {
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, req, uintptr(arg))
@@ -74,14 +78,14 @@ func OpenBus(h Hardware) (Bus, error) {
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), i2cSlave, uintptr(h.Address)); errno != 0 {
 		return fail(errno)
 	}
-	bus := &linuxBus{f}
+	bus := &linuxBus{f: f, splitReads: h.Profile == "em-sub2-acpi"}
 	if h.Profile == "em-sub2-acpi" {
-		if funcs&0x00200000 == 0 {
-			return fail(errors.New("adapter lacks SMBus word reads for MCU identity"))
+		if funcs&1 == 0 {
+			return fail(errors.New("SUB2 adapter lacks plain I2C reads"))
 		}
-		var data [34]byte
-		if err = bus.transfer(1, 0x5a, smbusWordData, &data); err != nil {
-			return fail(fmt.Errorf("SUB2 MCU identity at %s/0x3a: %w", h.Device, err))
+		data, readErr := bus.readRegister(0x5a)
+		if readErr != nil {
+			return fail(fmt.Errorf("SUB2 MCU identity at %s/0x3a: %w", h.Device, readErr))
 		}
 		if err = validateChipID(data[0], data[1]); err != nil {
 			return fail(err)
@@ -111,24 +115,88 @@ func (b *linuxBus) WriteFrame(id byte, frame [12]byte) error {
 	copy(data[1:], frame[:])
 	return b.transfer(0, id, smbusI2CBlock, &data)
 }
-func (b *linuxBus) ReadAck() (byte, error) {
+
+// readRegister admits only the MCU identity, acknowledgement and four LED
+// status registers. Legacy I801 hardware retains its original SMBus reads.
+func (b *linuxBus) readRegister(reg byte) ([]byte, error) {
+	length, size, err := readRegisterFormat(reg)
+	if err != nil {
+		return nil, err
+	}
+	if b.splitReads {
+		return readSplitRegister(b.f, reg)
+	}
 	var data [34]byte
-	err := b.transfer(1, 0x80, smbusByteData, &data)
-	return data[0], err
+	if length == 11 {
+		data[0] = 11
+	}
+	if err := b.transfer(1, reg, size, &data); err != nil {
+		return nil, err
+	}
+	if length == 11 {
+		if data[0] != 11 {
+			return nil, errors.New("short LED status response")
+		}
+		return data[1:12], nil
+	}
+	return data[:length], nil
+}
+
+func readRegisterFormat(reg byte) (int, uint32, error) {
+	switch {
+	case reg == 0x5a:
+		return 2, smbusWordData, nil
+	case reg == 0x80:
+		return 1, smbusByteData, nil
+	case reg >= 0x81 && reg <= 0x84:
+		return 11, smbusI2CBlock, nil
+	default:
+		return 0, 0, errors.New("not an allowed MCU read register")
+	}
+}
+
+// On the verified SUB2 MCU, combined SMBus reads intermittently return all
+// zeroes, including for chip ID. A read-only A/B/A comparison isolated this to
+// the combined read sequence. Separate register selection (one byte, STOP)
+// from the read by 10 ms. These are NOT LED-setting frames. Keep the adapter
+// flock for both transfers, never retry partial transfers, and never use
+// io.ReadFull: each extra Read would be a separate hardware transaction.
+func readSplitRegister(dev io.ReadWriter, reg byte) ([]byte, error) {
+	length, _, err := readRegisterFormat(reg)
+	if err != nil {
+		return nil, err
+	}
+	n, err := dev.Write([]byte{reg})
+	if err != nil {
+		return nil, err
+	}
+	if n != 1 {
+		return nil, errors.New("short MCU register selection")
+	}
+	time.Sleep(10 * time.Millisecond)
+	data := make([]byte, length)
+	n, err = dev.Read(data)
+	if err != nil {
+		return nil, err
+	}
+	if n != length {
+		return nil, errors.New("short MCU register read")
+	}
+	return data, nil
+}
+
+func (b *linuxBus) ReadAck() (byte, error) {
+	data, err := b.readRegister(0x80)
+	if err != nil {
+		return 0, err
+	}
+	return data[0], nil
 }
 func (b *linuxBus) ReadStatus(id byte) ([]byte, error) {
 	if id > 3 {
 		return nil, errors.New("invalid LED id")
 	}
-	var data [34]byte
-	data[0] = 11
-	if err := b.transfer(1, 0x81+id, smbusI2CBlock, &data); err != nil {
-		return nil, err
-	}
-	if data[0] != 11 {
-		return nil, errors.New("short LED status response")
-	}
-	return data[1:12], nil
+	return b.readRegister(0x81 + id)
 }
 func (b *linuxBus) Close() error { return b.f.Close() }
 

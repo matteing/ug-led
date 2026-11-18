@@ -187,3 +187,43 @@ No new command types or firmware operations are introduced, and service
 restarts remain manual. Readback-confirmed missing ACKs are logged with a
 cumulative count at most every 30 seconds; failures include command, parameters
 and available readback. The change requires live validation on the affected NAS.
+
+## SUB2 read transaction correction (0.2.3)
+
+Live 0.2.2 logs showed that a requested setting could be confirmed despite an
+ACK byte of zero, but periodic status reads still failed checksum validation.
+A stopped-service capture also obtained MCU identity `0x0000` after a successful
+read. Increasing write settling time had not resolved the read-side fault.
+
+An independent Python/ctypes probe on the same exact SUB2 profile compared three
+phases on one exclusively locked adapter. Each phase read the identity, ACK and
+four LED states 32 times. It used no LED-setting commands. Transport errors would
+abort the probe; none occurred. Here are the observed invalid responses:
+
+| Method | Invalid LED statuses | Invalid chip IDs | Zero ACK bytes |
+| --- | --- | --- | --- |
+| Existing combined SMBus reads, before | 4 / 128 | 1 / 32 | 1 / 32 |
+| Register selection, STOP, 10 ms wait, plain read | 0 / 128 | 0 / 32 | 0 / 32 |
+| Existing combined SMBus reads, after | 15 / 128 | 3 / 32 | 0 / 32 |
+
+Every invalid status was eleven zero bytes; every invalid ID was two zero
+bytes. All valid IDs were `b2 c5` (little-endian `0xc5b2`). The comparison took
+8.789 seconds. Reappearance when switching back implicates the combined read
+transaction on this board/MCU; it does not prove the MCU's internal mechanism,
+which part of STOP/delay is essential, or a universal requirement for all boards.
+
+Version 0.2.3 therefore uses the successful sequence **only** for the exact
+`em-sub2-acpi` profile, including the initial identity check. Each selection is
+one byte naming an allowed read register: `0x5a`, `0x80`, or `0x81..0x84`.
+It sends no value/LED-setting payload. Linux `write()` ends that selection with
+STOP; after 10 ms, one `read()` requests the exact response length. The existing
+adapter lock spans both transfers; as before, unrelated I2C software must not
+access the MCU concurrently. Plain-I2C capability is required. Short transfers
+and transport errors abort without retrying; checksums and chip identity are
+still mandatory. No device address, bus speed, LED command frame, brightness
+limit or retry budget changes. Legacy I801 profiles retain SMBus reads.
+
+Linux documents the distinction between plain and combined transactions in
+[the i2c-dev interface](https://docs.kernel.org/i2c/dev-interface.html).
+The successful sample is evidence for this targeted correction, not an
+endurance test or electrical certification. Longer live acceptance is required.

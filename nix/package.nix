@@ -1,7 +1,7 @@
 { lib, buildGoModule }:
 buildGoModule {
   pname = "ug-led";
-  version = "0.2.2";
+  version = "0.2.3";
   src = lib.cleanSource ../.;
   vendorHash = null;
   subPackages = [ "cmd/ug-led" ];
@@ -9,7 +9,7 @@ buildGoModule {
   ldflags = [
     "-s"
     "-w"
-    "-X main.version=0.2.2"
+    "-X main.version=0.2.3"
   ];
   meta = {
     description = "Conservative userspace front-panel LED control for the Intel UGREEN DXP2800";

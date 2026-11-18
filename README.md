@@ -46,6 +46,10 @@ the Intel SMBus adapter. The exact `EM_DXP2800_SUB2_V1.0.27` profile follows the
 MCU's ACPI parent to its Intel DesignWare adapter and requires chip ID `0xc5b2`.
 Both profiles use vendor address `0x3a`; other SUB2 revisions are rejected.
 See [the ACPI/address discrepancy](docs/firmware.md#sub2-board-discovery).
+On this exact SUB2 profile, 0.2.3 separates register selection from reading with
+a STOP and 10 ms wait. An on-device read-only comparison found intermittent
+all-zero responses with combined SMBus reads and none in the sampled split-read
+phase. Other profiles keep SMBus reads. See [read transaction evidence](docs/firmware.md#sub2-read-transaction-correction-023).
 `status` additionally
 checks SMBus capabilities and the checksum/format of all four LED responses.
 These checks reduce the chance of using the wrong device; they cannot establish

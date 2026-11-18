@@ -121,3 +121,23 @@ check missing-ACK diagnostics and kernel logs, and then conduct a longer soak.
 A successful build or short run alone does not establish the underlying MCU
 cause or long-term reliability. Physical bay mapping and reboot acceptance
 remain separate checks.
+
+## SUB2 read transaction correction in 0.2.3
+
+On 2026-11-18, 0.2.2 still exited on invalid status checksums, including after
+8m32s with at least 31 readback-confirmed missing ACKs. With the service stopped,
+a read-only A/B/A comparison reproduced all-zero responses using combined SMBus
+reads, eliminated them in the sampled split-read phase, and reproduced them
+again when returning to SMBus. See [the measured counts](firmware.md#sub2-read-transaction-correction-023).
+
+Linux regression tests cover the six allowed register selectors, exact response
+lengths, one-byte selection with no setting payload, settling measured after a
+slow selection, rejection of all other 250 selectors before I/O, and immediate
+failure without retries on partial/failed transfers. Existing identity,
+checksum, write-frame and bounded-recovery tests remain in place.
+
+The split-read diagnostic completed 192 register reads with no invalid response;
+this is not yet a long-duration daemon acceptance result. Observe the corrected
+service beyond the prior failure windows, inspect both fatal and missing-ACK
+logs, and verify physical colors and bay mapping separately. Do not weaken
+validation or enable automatic restart loops to conceal recurring failures.
