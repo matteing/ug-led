@@ -1,0 +1,5 @@
+/result*
+/ug-led
+*.test
+*.prof
+/coverage.out

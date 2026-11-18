@@ -1,0 +1,38 @@
+The UGREEN LED wire protocol was originally documented by Yuhao Zhou (miskcoo):
+https://github.com/miskcoo/ugreen_leds_controller
+Reference revision: f0fcd8192abdd92244aba9f6f0d10572f5561380
+
+This project independently implements that protocol in Go and corroborates it
+through offline inspection of publicly distributed DXP2800 UGOS firmware.
+The upstream userspace CLI is MIT licensed. Its license is reproduced below
+in recognition of the protocol and implementation reference. Upstream kernel
+source files carry GPL-2.0-only headers; none are included in this project.
+
+The pjrobot/ugreen-leds-truenas project demonstrated userspace activity polling
+with hardware blink mode and provided another implementation reference:
+https://github.com/pjrobot/ugreen-leds-truenas
+
+UGREEN firmware, binaries, extracted files and disassembly are NOT distributed
+in this repository. UGREEN does not sponsor or endorse this project.
+
+MIT License
+
+Copyright (c) 2024 miskcoo@gmail.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,0 +1,18 @@
+{
+  "poll_ms": 200,
+  "hold_ms": 400,
+  "bays": ["ata1", "ata2"],
+  "interface": "enp2s0",
+  "leds": {
+    "power": {"mode": "on", "brightness": 64},
+    "network": {"mode": "activity", "brightness": 64},
+    "disk1": {"mode": "activity", "brightness": 64},
+    "disk2": {"mode": "activity", "brightness": 64}
+  },
+  "night": {
+    "start": "22:00",
+    "end": "07:00",
+    "timezone": "Etc/UTC",
+    "brightness": 16
+  }
+}
