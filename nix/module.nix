@@ -132,7 +132,7 @@ in
         MemoryDenyWriteExecute = true;
         RestrictAddressFamilies = [ "AF_UNIX" ];
         # The bus number is discovered, not fixed. The program further restricts
-        # access to the verified Intel adapter and slave address 0x3a.
+        # access to the verified I801 or ACPI-linked DesignWare adapter at 0x3a.
         DevicePolicy = "closed";
         DeviceAllow = [ "char-i2c rw" ];
         SystemCallArchitectures = "native";

@@ -191,3 +191,47 @@ func TestBusPacing(t *testing.T) {
 		t.Fatal("bus pacing too short")
 	}
 }
+
+func TestDiagnosePreservesInvalidStatusWithoutWrites(t *testing.T) {
+	b := newFake()
+	b.states[2] = State{Mode: "off"}
+	reports, err := NewController(b).Diagnose(context.Background())
+	if err == nil || len(reports) != 4 || b.reads != 4 || len(b.writes) != 0 {
+		t.Fatal(reports, err, b.reads, b.writes)
+	}
+	if reports[0].State == nil || reports[2].State != nil || reports[2].Raw != "00 00 00 00 00 00 00 00 00 00 00" || reports[2].Error == "" {
+		t.Fatal(reports)
+	}
+}
+
+type flakyStatusBus struct {
+	*fakeBus
+	bad       int
+	transport bool
+}
+
+func (b *flakyStatusBus) ReadStatus(id byte) ([]byte, error) {
+	data, _ := b.fakeBus.ReadStatus(id)
+	if b.transport {
+		return nil, errors.New("transport failure")
+	}
+	if b.bad > 0 {
+		b.bad--
+		data[10] ^= 1
+	}
+	return data, nil
+}
+func TestRefreshChecksumRereadsAreBounded(t *testing.T) {
+	b := &flakyStatusBus{fakeBus: newFake(), bad: 1}
+	if _, e := NewController(b).Refresh(context.Background()); e != nil || b.reads != 5 || len(b.writes) != 0 {
+		t.Fatal(e, b.reads)
+	}
+	b = &flakyStatusBus{fakeBus: newFake(), bad: 100}
+	if _, e := NewController(b).Refresh(context.Background()); e == nil || b.reads != 3 || len(b.writes) != 0 {
+		t.Fatal(e, b.reads)
+	}
+	b = &flakyStatusBus{fakeBus: newFake(), transport: true}
+	if _, e := NewController(b).Refresh(context.Background()); e == nil || b.reads != 1 {
+		t.Fatal("transport must not retry", e, b.reads)
+	}
+}

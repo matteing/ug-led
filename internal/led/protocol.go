@@ -97,6 +97,8 @@ func Frame(id byte, cmd byte, p [4]byte) ([12]byte, error) {
 	return b, nil
 }
 
+var errStatusChecksum = errors.New("invalid LED status checksum")
+
 func DecodeStatus(b []byte) (State, error) {
 	var s State
 	if len(b) != 11 {
@@ -107,7 +109,7 @@ func DecodeStatus(b []byte) (State, error) {
 		sum += int(v)
 	}
 	if sum == 0 || sum != int(b[9])<<8|int(b[10]) {
-		return s, errors.New("invalid LED status checksum")
+		return s, errStatusChecksum
 	}
 	if b[0] > 3 {
 		return s, errors.New("unknown LED status mode")
@@ -166,18 +168,26 @@ func (c *Controller) pace(ctx context.Context) error {
 func (c *Controller) Refresh(ctx context.Context) ([4]State, error) {
 	var states [4]State
 	for id := range states {
-		if err := c.pace(ctx); err != nil {
-			return states, err
-		}
-		b, err := c.bus.ReadStatus(byte(id))
-		if err != nil {
-			return states, fmt.Errorf("%s status: %w", Names[id], err)
-		}
-		states[id], err = DecodeStatus(b)
-		if err != nil {
-			return states, fmt.Errorf("%s: %w", Names[id], err)
+		for attempt := 0; attempt < 3; attempt++ {
+			if err := c.pace(ctx); err != nil {
+				return states, err
+			}
+			b, err := c.bus.ReadStatus(byte(id))
+			if err != nil {
+				return states, fmt.Errorf("%s status: %w", Names[id], err)
+			}
+			states[id], err = DecodeStatus(b)
+			if err == nil {
+				break
+			}
+			// Only a bad checksum gets a bounded reread. Never accept corrupt bytes,
+			// retry transport errors, or normalize unsupported modes/timings.
+			if !errors.Is(err, errStatusChecksum) || attempt == 2 {
+				return states, fmt.Errorf("%s: %w", Names[id], err)
+			}
 		}
 	}
+
 	c.states = states
 	c.known = [4]bool{true, true, true, true}
 	return states, nil
@@ -254,4 +264,40 @@ func (c *Controller) Apply(ctx context.Context, id int, s State) error {
 	}
 	c.states[id], c.known[id] = s, true
 	return nil
+}
+
+// StatusReport preserves bytes on decode failure without treating them as a
+// safe state for writes/restoration. Diagnose only reads the four known LEDs.
+type StatusReport struct {
+	LED   string `json:"led"`
+	Raw   string `json:"raw"`
+	State *State `json:"state,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+func (c *Controller) Diagnose(ctx context.Context) ([]StatusReport, error) {
+	reports := make([]StatusReport, 0, 4)
+	invalid := false
+	for id, name := range Names {
+		if e := c.pace(ctx); e != nil {
+			return reports, e
+		}
+		b, e := c.bus.ReadStatus(byte(id))
+		if e != nil {
+			return reports, fmt.Errorf("%s status read: %w", name, e)
+		}
+		r := StatusReport{LED: name, Raw: fmt.Sprintf("% x", b)}
+		s, e := DecodeStatus(b)
+		if e != nil {
+			r.Error = e.Error()
+			invalid = true
+		} else {
+			r.State = &s
+		}
+		reports = append(reports, r)
+	}
+	if invalid {
+		return reports, errors.New("one or more LED states failed validation; no writes performed")
+	}
+	return reports, nil
 }

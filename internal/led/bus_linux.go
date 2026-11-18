@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -17,6 +18,7 @@ const (
 	i2cFuncs          = 0x0705
 	i2cSMBus          = 0x0720
 	smbusByteData     = 2
+	smbusWordData     = 3
 	smbusI2CBlock     = 8
 	requiredFunctions = 0x00080000 | 0x04000000 | 0x08000000
 )
@@ -69,10 +71,24 @@ func OpenBus(h Hardware) (Bus, error) {
 	if funcs&requiredFunctions != requiredFunctions {
 		return fail(errors.New("adapter lacks required SMBus operations"))
 	}
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), i2cSlave, 0x3a); errno != 0 {
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), i2cSlave, uintptr(h.Address)); errno != 0 {
 		return fail(errno)
 	}
-	return &linuxBus{f}, nil
+	bus := &linuxBus{f}
+	if h.Profile == "em-sub2-acpi" {
+		if funcs&0x00200000 == 0 {
+			return fail(errors.New("adapter lacks SMBus word reads for MCU identity"))
+		}
+		var data [34]byte
+		if err = bus.transfer(1, 0x5a, smbusWordData, &data); err != nil {
+			return fail(fmt.Errorf("SUB2 MCU identity at %s/0x3a: %w", h.Device, err))
+		}
+		if err = validateChipID(data[0], data[1]); err != nil {
+			return fail(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return bus, nil
 }
 func (b *linuxBus) transfer(read, reg byte, size uint32, data *[34]byte) error {
 	args := ioctlData{ReadWrite: read, Command: reg, Size: size, Data: data}
@@ -115,3 +131,11 @@ func (b *linuxBus) ReadStatus(id byte) ([]byte, error) {
 	return data[1:12], nil
 }
 func (b *linuxBus) Close() error { return b.f.Close() }
+
+func validateChipID(low, high byte) error {
+	id := uint16(low) | uint16(high)<<8
+	if id != 0xc5b2 {
+		return fmt.Errorf("unexpected SUB2 MCU identity 0x%04x; refusing access", id)
+	}
+	return nil
+}

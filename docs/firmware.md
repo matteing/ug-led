@@ -32,8 +32,9 @@ Do not run vendor executables on the host.
 | `hwmonitor` | `e3a2891a20fcdbab1c90374eff0ba9b5d6840634021bb3d43e681831e89b03be` |
 | `led.conf` | `590ba00467ae7daf25bc009460d5dfeabd91ea373c803e473ef602e8af5a6ff8` |
 
-This was an inspection of one official image, not an exhaustive audit of every
-UGOS release or board revision. The image contains several platform drivers;
+The initial analysis used 1.17; the SUB2 investigation below also checks 1.21.
+This is not an exhaustive audit of every UGOS release or board revision.
+The images contain several platform drivers;
 this report focuses on the HT32F52231 28/48-family implementation and cross-checks
 its wire format against the community userspace implementation.
 
@@ -68,7 +69,7 @@ The original community research is
 reviewed at revision `f0fcd8192abdd92244aba9f6f0d10572f5561380`.
 Its MIT-licensed CLI and the official binary agree on the following operations:
 
-- Intel SMBus, slave address `0x3a`.
+- Intel SMBus or Synopsys DesignWare, vendor slave address `0x3a`.
 - Four supported front-panel IDs here: power 0, network 1, disk1 2, disk2 3.
 - SMBus I²C-block write, register equal to LED id, 12-byte payload:
   `[id, 0xa0, 0x01, 0, 0, command, p0, p1, p2, p3, sum_hi, sum_lo]`.
@@ -118,3 +119,44 @@ verified identities, protocol evidence and tests.
 Only findings and original source code are published. Vendor binaries,
 disassemblies, firmware images, temporary signed links, and machine-specific
 private configuration remain outside the public repository.
+
+
+## SUB2 board discovery
+
+A target with BIOS and product-version `EM_DXP2800_SUB2_V1.0.27` exposed its
+HT32F522 ACPI device under `\_SB_.PC00.I2C1.MCU0`, on the Intel PCI controller
+`0000:00:15.1`. Linux linked it to a Synopsys DesignWare adapter, separate from
+the I801 SMBus. A read on I801/0x3a failed with ENXIO, matching the independently
+reported [upstream issue 133](https://github.com/miskcoo/ugreen_leds_controller/issues/133).
+
+The board's DSDT `_CRS` says `I2cSerialBusV2(0x0074, ..., AddressingMode7Bit, ...)`
+at 100 kHz, but a status read at that declared address failed with remote I/O.
+The vendor driver supplies the decisive distinction: both UGOS 1.17.0.0095 and
+**1.21.1.0016** enumerate adapter names beginning `SMBus` or `Synopsys`, create an
+I2C client with **7-bit address 0x3a**, and check SMBus word register `0x5a` for
+chip identity **0xc5b2**. They do not use the ACPI-declared address for this client.
+
+In the 1.21 driver, `leds_ht32f52231_init` is at `.init.text+0x10`; name checks
+reference `.rodata.str1.1+0xb3` (SMBus) and `+0xb9` (Synopsys). The client
+address is `.data+0x16` (`3a 00`), the chip read is at `.init.text+0xca`, and the
+identity comparison at `+0xe0`. LED reads remain 11-byte I2C-block reads and
+writes remain 12-byte I2C-block writes using the documented frames.
+
+The 1.21 image is official catalog id 2551, MD5
+`389fe6f2a432e0a82763da040a519660` (verified), with kernel 6.18.15. Its extracted
+`leds-mcu-28a48.ko` SHA-256 is
+`4b589ae88ec1dfb23d20cf872c66738120533c37b70e95a057573b419d09a4a1`.
+Only offline disassembly was used; no vendor code or firmware was loaded.
+
+Using the ACPI-linked DesignWare adapter **and the vendor address 0x3a** passed
+the MCU identity check and returned valid checksums for all four LEDs on the
+SUB2 target. One earlier disk response failed checksum validation; a later raw
+read succeeded. `Refresh` therefore permits at most three paced checksum reads,
+while transport errors/unsupported states still abort. Raw diagnostics preserve
+the original response and report failures without writes or retries.
+
+ug-led's SUB2 profile requires the exact BIOS/product-version, expected ACPI
+path and physical-node link, matching i2c-dev parent, Intel PCI vendor/location,
+DesignWare adapter name and MCU identity. It does not hardcode a Linux bus
+number, scan other buses/addresses, or assume every DesignWare/EM board is safe.
+The raw DSDT and machine-specific dump remain outside the public repository.

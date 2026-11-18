@@ -9,7 +9,8 @@
 - NixOS module evaluation, generated-config validation, and package tests on Linux.
 - Offline inspection of official DXP2800 UGOS 1.17.0.0095; catalog checksum matched.
 - Read-only sysfs hardware discovery on an Intel DXP2800, BIOS family
-  `EM_DXP2800_SUB2_V1.0.27`, HT32F522 ACPI identity and Intel I801 SMBus.
+  `EM_DXP2800_SUB2_V1.0.27` and HT32F522 ACPI identity. The initial I801
+  selection was corrected to the ACPI-linked DesignWare adapter in 0.2.1 below.
 - Unprivileged daemon dry run using the actual two SATA disks and Ethernet counters.
 
 ## Performance measurements
@@ -84,3 +85,17 @@ Validated on macOS arm64 and the original Intel DXP2800 running NixOS x86_64:
 These tests do not establish physical LED behavior. Privileged MCU readback,
 visible color/bay mapping, actual exporter recording under systemd, shutdown
 restoration and reboot persistence remain acceptance steps on the target NAS.
+
+
+## SUB2 discovery correction in 0.2.1
+
+On an `EM_DXP2800_SUB2_V1.0.27` target, the ACPI-linked Intel DesignWare adapter
+at vendor address 0x3a passed the required MCU ID check (0xc5b2) and returned
+checksum-valid states for power, network, disk1 and disk2. I801/0x3a and the
+DSDT-declared 0x74 endpoint did not work. See [firmware evidence](firmware.md#sub2-board-discovery).
+
+Tests now cover bus renumbering with an unrelated I801 adapter present, exact
+SUB2 BIOS/ACPI/PCI matching, MCU identity byte order/rejection, bounded checksum
+rereads, immediate transport failure, and raw diagnostics preserving invalid
+bytes without writes. Discovery and readback are validated; visible color/bay
+mapping, actual write acknowledgements and lifecycle acceptance remain separate.

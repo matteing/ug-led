@@ -41,6 +41,7 @@ func execute(args []string, out io.Writer) error {
 	}
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	f.SetOutput(out)
+	rawStatus := f.Bool("raw", false, "include raw controller status bytes for diagnostics (status)")
 	config := f.String("config", "", "JSON configuration (required for check/run)")
 	dry := f.Bool("dry-run", false, "print intended states without opening I2C (run/set)")
 	duration := f.Duration("duration", 0, "stop after this duration (run)")
@@ -60,7 +61,7 @@ func execute(args []string, out io.Writer) error {
 		return errors.New("unexpected positional arguments")
 	}
 	// Reject options irrelevant to a command, rather than silently ignoring them.
-	allowed := map[string]string{"inspect": "", "status": "", "check": "config", "run": "config dry-run duration", "set": "led mode brightness color on-ms off-ms dry-run"}
+	allowed := map[string]string{"inspect": "", "status": "raw", "check": "config", "run": "config dry-run duration", "set": "led mode brightness color on-ms off-ms dry-run"}
 	options, ok := allowed[args[0]]
 	if !ok {
 		return fmt.Errorf("unknown command %q", args[0])
@@ -156,6 +157,13 @@ func execute(args []string, out io.Writer) error {
 	}
 	defer bus.Close()
 	ctl := led.NewController(bus)
+	if args[0] == "status" && *rawStatus {
+		reports, e := ctl.Diagnose(ctx)
+		if outputErr := encode(reports); outputErr != nil {
+			return outputErr
+		}
+		return e
+	}
 	initial, err := ctl.Refresh(ctx)
 	if err != nil {
 		return err

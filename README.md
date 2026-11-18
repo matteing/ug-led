@@ -4,14 +4,14 @@ A small Go utility for the **original Intel UGREEN DXP2800** front-panel LEDs.
 Independent RGB color, brightness, on/off, blink and breathing control, plus a
 native NixOS service for disk/network activity, health colors and scheduled dimming.
 
-Uses Linux's stock `i2c-i801` and `i2c-dev` interfaces. No external kernel module,
+Uses Linux's stock I801/DesignWare drivers and `i2c-dev` interface. No external kernel module,
 CGO, Go dependencies, Docker or network listener. The LED daemon issues no SMART
 queries or disk-device reads; optional health collection reuses existing monitoring.
 
 **Experimental:** software tests, firmware analysis, hardware identification and
-unprivileged activity sampling have been checked. Privileged LED readback, visible
-colors, physical bay order, and restart/reboot behavior still need hardware
-acceptance. Do not interpret successful compilation as hardware certification.
+unprivileged activity sampling have been checked. SUB2 MCU identity and all four
+LED states have been read successfully. Visible colors, physical bay order,
+and restart/reboot behavior still need hardware acceptance. Do not interpret successful compilation as hardware certification.
 Only Linux amd64 can access the controller; macOS builds support development and
 dry runs. GT, V1.2 and other models are not claimed supported.
 
@@ -37,10 +37,16 @@ ug-led inspect                       # sysfs only; no controller access
 ug-led check --config config.json    # validate and show effective settings
 ug-led run --config config.json --dry-run --duration 30s
 sudo ug-led status                   # controller reads only, no LED-state writes
+sudo ug-led status --raw             # raw bytes plus per-LED decode diagnostics
 ```
 
 `inspect` requires the `DXP2800` DMI identity, `EM_DXP2800_` system-version and BIOS families,
-HT32F522 ACPI device and exactly one Intel SMBus adapter. `status` additionally
+HT32F522 ACPI device and a recognized hardware profile. Legacy EM boards use
+the Intel SMBus adapter. The exact `EM_DXP2800_SUB2_V1.0.27` profile follows the
+MCU's ACPI parent to its Intel DesignWare adapter and requires chip ID `0xc5b2`.
+Both profiles use vendor address `0x3a`; other SUB2 revisions are rejected.
+See [the ACPI/address discrepancy](docs/firmware.md#sub2-board-discovery).
+`status` additionally
 checks SMBus capabilities and the checksum/format of all four LED responses.
 These checks reduce the chance of using the wrong device; they cannot establish
 electrical compatibility for every hardware revision.
@@ -174,7 +180,7 @@ The module builds the binary, loads stock modules, generates
 systemd service. Root is used to open the root-owned I²C node; capabilities are
 dropped and the filesystem is read-only. Device access is restricted to I²C
 character devices, with the application selecting only the verified Intel
-adapter and address `0x3a`. This is not a kernel-enforced per-address sandbox.
+I801 or ACPI-linked DesignWare adapter and address `0x3a`. This is not a kernel-enforced per-address sandbox.
 
 On controller failure the service stops and requires an operator restart;
 it does not enter an automatic hardware retry loop. A normal SIGTERM attempts
@@ -200,7 +206,9 @@ hardware damage. See [the firmware findings](docs/firmware.md).
 
 One loop samples two disks and one NIC five times per second by default. Writes
 occur only on state changes. Read-only reconciliation every 30 seconds detects
-controller state drift. Every bus transaction is spaced at least 10 ms apart;
+controller state drift. Checksum failures get at most three paced reads; corrupt
+data is never accepted. Transport errors and unsupported states stop immediately.
+Every bus transaction is spaced at least 10 ms apart;
 negative acknowledgements get at most three attempts with an additional 50 ms
 backoff. Transport errors abort immediately. Continuous disk activity needs one
 blink command at the beginning and one steady command at the end, assuming

@@ -27,3 +27,14 @@ func TestRawBusRejectsInvalidWritesBeforeIOCTL(t *testing.T) {
 		t.Fatal("invalid status register accepted")
 	}
 }
+
+func TestSUB2ChipIdentity(t *testing.T) {
+	if e := validateChipID(0xb2, 0xc5); e != nil {
+		t.Fatal(e)
+	}
+	for _, b := range [][2]byte{{0, 0}, {0xff, 0xff}, {0xc5, 0xb2}, {0xb3, 0xc5}} {
+		if validateChipID(b[0], b[1]) == nil {
+			t.Fatal("unknown MCU accepted", b)
+		}
+	}
+}
