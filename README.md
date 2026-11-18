@@ -2,10 +2,11 @@
 
 A small Go utility for the **original Intel UGREEN DXP2800** front-panel LEDs.
 Independent RGB color, brightness, on/off, blink and breathing control, plus a
-native NixOS service for disk/network activity and scheduled dimming.
+native NixOS service for disk/network activity, health colors and scheduled dimming.
 
 Uses Linux's stock `i2c-i801` and `i2c-dev` interfaces. No external kernel module,
-CGO, Go dependencies, Docker, network listener, SMART queries or disk-device reads.
+CGO, Go dependencies, Docker or network listener. The LED daemon issues no SMART
+queries or disk-device reads; optional health collection reuses existing monitoring.
 
 **Experimental:** software tests, firmware analysis, hardware identification and
 unprivileged activity sampling have been checked. Privileged LED readback, visible
@@ -109,9 +110,9 @@ white at brightness 64. Set network mode to `off` if no interface should be read
   Discovery runs every five seconds. Verify the physical mapping on your unit.
 - Network activity uses carrier and byte counters. It does not claim Internet
   connectivity or issue pings.
-- No automatic drive-health or sleep claims: idle does not prove standby, and
-  ordinary activity counters do not prove disk health. Static amber/blink/breath
-  modes are available for an operator to select explicitly.
+- Optional [health-aware colors](docs/health.md) consume fresh SMART observations
+  and Btrfs status. Idle alone never proves standby or disk health. Without health
+  configuration, these remain activity indicators only.
 - Polling defaults to 200 ms (range 100–5000); the activity hold defaults to 400 ms
   (must be at least the polling interval and at most 10000 ms).
 - A night window is start-inclusive, end-exclusive, and may cross midnight. Its
@@ -135,6 +136,13 @@ In JSON, `percent` is an array of seven arrays, each containing 24 integers from
 brightness. Set a LED's configured brightness to 255 if the schedule should use
 the full range. `night` and `weekly` are mutually exclusive. Configuration is
 read at startup; restart the service after changing it.
+
+## Health colors
+
+Enable the enhanced or UGOS-inspired preset to prioritize SMART failures,
+temperature warnings, missing expected disks and Btrfs errors over activity.
+Unknown/stale data is purple; enhanced warnings are amber and critical faults
+blink red. See [setup, state rules and data freshness](docs/health.md).
 
 ## NixOS
 

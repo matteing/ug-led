@@ -15,6 +15,7 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
       - run: go test ./internal/led -run '^$' -fuzz FuzzDecodeStatus -fuzztime 10s
+      - run: go test ./internal/health -run '^$' -fuzz FuzzSnapshot -fuzztime 10s
       - run: go build ./cmd/ug-led
   nix:
     runs-on: ubuntu-latest

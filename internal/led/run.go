@@ -14,6 +14,7 @@ func Run(ctx context.Context, c Config, sysfs string, ctl *Controller, out io.Wr
 		return err
 	}
 	sampler := NewSampler(sysfs, c)
+	var health healthReader
 	var previous [4]State
 	known := false
 	nextRefresh := time.Now().Add(30 * time.Second)
@@ -31,6 +32,7 @@ func Run(ctx context.Context, c Config, sysfs string, ctl *Controller, out io.Wr
 		if err != nil {
 			return err
 		}
+		health.apply(now, c, &states)
 		for id, state := range states {
 			if ctl != nil {
 				if err := ctl.Apply(ctx, id, state); err != nil {

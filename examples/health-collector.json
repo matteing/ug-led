@@ -1,0 +1,11 @@
+{
+  "smart_dir": "/run/ug-led-smart",
+  "max_age_seconds": 660,
+  "interface": "enp2s0",
+  "disks": [
+    {"id": "ata-REPLACE_BAY_1", "component": "disk1", "warning_c": 50, "critical_c": 60},
+    {"id": "ata-REPLACE_BAY_2", "component": "disk2", "warning_c": 50, "critical_c": 60},
+    {"id": "nvme-REPLACE_SYSTEM_DISK", "component": "power", "warning_c": 60, "critical_c": 70}
+  ],
+  "btrfs": []
+}

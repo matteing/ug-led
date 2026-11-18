@@ -36,13 +36,14 @@ type Policies struct {
 func (p Policies) Array() [4]State { return [4]State{p.Power, p.Network, p.Disk1, p.Disk2} }
 
 type Config struct {
-	Weekly    *Weekly  `json:"weekly,omitempty"`
-	PollMS    int      `json:"poll_ms"`
-	HoldMS    int      `json:"hold_ms"`
-	Bays      []string `json:"bays"`
-	Interface string   `json:"interface"`
-	LEDs      Policies `json:"leds"`
-	Night     *Night   `json:"night,omitempty"`
+	Health    *HealthConfig `json:"health,omitempty"`
+	Weekly    *Weekly       `json:"weekly,omitempty"`
+	PollMS    int           `json:"poll_ms"`
+	HoldMS    int           `json:"hold_ms"`
+	Bays      []string      `json:"bays"`
+	Interface string        `json:"interface"`
+	LEDs      Policies      `json:"leds"`
+	Night     *Night        `json:"night,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -86,6 +87,11 @@ func clockMinute(s string) (int, error) {
 	return h*60 + m, nil
 }
 func (c *Config) Validate() error {
+	if c.Health != nil {
+		if e := c.Health.validate(); e != nil {
+			return e
+		}
+	}
 	if c.PollMS < 100 || c.PollMS > 5000 {
 		return errors.New("poll_ms must be 100..5000")
 	}

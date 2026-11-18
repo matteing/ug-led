@@ -8,6 +8,7 @@ let
   cfg = config.services.ug-led;
   format = pkgs.formats.json { };
   configFile = format.generate "ug-led.json" cfg.settings;
+  collectorFile = format.generate "ug-led-collector.json" cfg.collector.settings;
 in
 {
   options.services.ug-led = {
@@ -16,6 +17,14 @@ in
       type = lib.types.package;
       default = pkgs.callPackage ./package.nix { };
       description = "The ug-led package to run.";
+    };
+    collector = {
+      enable = lib.mkEnableOption "read-only SMART-record and Btrfs health collection";
+      settings = lib.mkOption {
+        type = format.type;
+        default = { };
+        description = "Collector JSON: smart_dir, max_age_seconds, disks, btrfs and optional interface. See docs/health.md.";
+      };
     };
     settings = lib.mkOption {
       type = format.type;
@@ -50,10 +59,54 @@ in
     ];
     environment.systemPackages = [ cfg.package ];
     environment.etc."ug-led/config.json".source = configFile;
+    environment.etc."ug-led/collector.json" = lib.mkIf cfg.collector.enable { source = collectorFile; };
+    systemd.services.ug-led-health = lib.mkIf cfg.collector.enable {
+      description = "Read cached SMART observations and Btrfs health for ug-led";
+      before = [ "ug-led.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${lib.getExe cfg.package} collect --config ${collectorFile} --output /run/ug-led/health.json";
+        DynamicUser = true;
+        RuntimeDirectory = "ug-led";
+        RuntimeDirectoryMode = "0755";
+        RuntimeDirectoryPreserve = "yes";
+        TimeoutStartSec = 10;
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        # /dev/disk/by-id is stat'ed to detect missing expected disks. Device
+        # access is denied; neither SMART nor block I/O is issued here.
+        DevicePolicy = "closed";
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        SystemCallFilter = [
+          "@system-service"
+          "~@mount"
+          "~@reboot"
+          "~@swap"
+        ];
+      };
+    };
+    systemd.timers.ug-led-health = lib.mkIf cfg.collector.enable {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "30s";
+        OnUnitActiveSec = "30s";
+        AccuracySec = "1s";
+      };
+    };
     systemd.services.ug-led = {
       description = "UGREEN DXP2800 front-panel LEDs";
       wantedBy = [ "multi-user.target" ];
-      after = [ "systemd-modules-load.service" ];
+      after = [
+        "systemd-modules-load.service"
+      ]
+      ++ lib.optional cfg.collector.enable "ug-led-health.service";
+      wants = lib.optional cfg.collector.enable "ug-led-health.service";
       serviceConfig = {
         Type = "simple";
         ExecStartPre = "${lib.getExe cfg.package} check --config ${configFile}";

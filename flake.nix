@@ -24,7 +24,24 @@
             };
             services.ug-led = {
               enable = true;
-              settings.interface = "eth0";
+              settings = {
+                interface = "eth0";
+                health = {
+                  file = "/run/ug-led/health.json";
+                  preset = "enhanced";
+                  max_age_seconds = 90;
+                  critical_brightness = 24;
+                  monitored = [
+                    "power"
+                    "disk1"
+                    "disk2"
+                  ];
+                };
+              };
+              collector = {
+                enable = true;
+                settings = builtins.fromJSON (builtins.readFile ./examples/health-collector.json);
+              };
             };
           })
         ];
@@ -75,6 +92,11 @@
         in
         {
           package = self.packages.${system}.default;
+          collector-config = pkgs.runCommand "ug-led-collector-config-check" { } ''
+            ${
+              self.packages.${system}.default
+            }/bin/ug-led collect --config ${./examples/health-collector.json} --check > $out
+          '';
           config = pkgs.runCommand "ug-led-config-check" { } ''
             ${self.packages.${system}.default}/bin/ug-led check --config ${./examples/dxp2800.json} > $out
           '';
@@ -82,6 +104,8 @@
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           nixos-module =
             assert moduleTest.config.systemd.services.ug-led.serviceConfig.Restart == "no";
+            assert moduleTest.config.systemd.services.ug-led-health.serviceConfig.DevicePolicy == "closed";
+            assert moduleTest.config.systemd.services.ug-led-health.serviceConfig.DynamicUser;
             assert builtins.isString moduleTest.config.system.build.toplevel.drvPath;
             pkgs.runCommand "ug-led-module-check" { } ''
               ${self.packages.${system}.default}/bin/ug-led check --config ${

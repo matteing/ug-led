@@ -19,14 +19,20 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "record-smart" {
+		os.Exit(record(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	if err := execute(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "ug-led:", err)
 		os.Exit(1)
 	}
 }
 func execute(args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "collect" {
+		return collect(args[1:], out)
+	}
 	if len(args) == 0 {
-		fmt.Fprintln(out, "ug-led: inspect | status | check | run | set | version\nUse ug-led <command> --help for options. Hardware access: original Intel DXP2800 only.")
+		fmt.Fprintln(out, "ug-led: inspect | status | check | run | set | collect | record-smart | version\nUse ug-led <command> --help for options. Hardware access: original Intel DXP2800 only.")
 		return nil
 	}
 	if args[0] == "version" {
@@ -216,4 +222,10 @@ func cleanExit(err error) error {
 		return nil
 	}
 	return err
+}
+
+func writeJSON(out io.Writer, v any) error {
+	e := json.NewEncoder(out)
+	e.SetIndent("", "  ")
+	return e.Encode(v)
 }

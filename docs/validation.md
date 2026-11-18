@@ -62,3 +62,25 @@ After reviewing the code and ensuring no other controller is running:
 Fault tests use the fake transport in unit tests; do not disconnect components
 or inject arbitrary I²C commands on a live NAS. If controller access fails,
 the service stops. Inspect the cause before restarting it.
+
+## Health-aware version 0.2.0
+
+Validated on macOS arm64 and the original Intel DXP2800 running NixOS x86_64:
+
+- Complete Go race suite and `go vet`; health parser fuzzing exercised more than
+  798,000 generated inputs in the local 10-second run.
+- `nix fmt` and `nix flake check` on macOS; Linux flake checks include both
+  configuration parsers and evaluation of the hardened collector/LED services.
+- Synthetic SMART reports cover healthy, overall failure, temperature thresholds,
+  pending sectors, NVMe critical warnings, historical exit bits, command failure,
+  actual smartctl power-mode object format, stale/future timestamps, missing
+  expected devices and standby retaining a recent fault.
+- Recorder tests preserve nonzero smartctl exit status and stdout/stderr, including
+  when writing a snapshot fails. No additional SMART query is introduced.
+- Synthetic Btrfs checks cover absent filesystems, missing members, error counters,
+  and precedence of a known fault over an unreadable sibling. Renderer tests cover
+  activity override, stale/missing snapshots and the critical night-brightness floor.
+
+These tests do not establish physical LED behavior. Privileged MCU readback,
+visible color/bay mapping, actual exporter recording under systemd, shutdown
+restoration and reboot persistence remain acceptance steps on the target NAS.
