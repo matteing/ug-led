@@ -180,7 +180,7 @@ func TestCanceledControllerNeverWrites(t *testing.T) {
 func TestBusPacing(t *testing.T) {
 	c := NewController(newFake())
 	ctx := context.Background()
-	if err := c.pace(ctx); err != nil {
+	if _, err := c.readAck(ctx); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()

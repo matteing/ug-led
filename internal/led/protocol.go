@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -133,13 +134,26 @@ type Bus interface {
 }
 
 type Controller struct {
-	bus    Bus
-	states [4]State
-	known  [4]bool
-	next   time.Time
+	bus                Bus
+	states             [4]State
+	known              [4]bool
+	next               time.Time
+	diagnostics        io.Writer
+	nextDiagnostic     time.Time
+	verifiedWithoutACK uint64
 }
 
-func NewController(b Bus) *Controller { return &Controller{bus: b} }
+func NewController(b Bus) *Controller { return &Controller{bus: b, diagnostics: io.Discard} }
+
+// SetDiagnosticWriter reports readback-confirmed missing acknowledgements, at
+// most once per 30 seconds, including a cumulative count. It performs no I/O
+// on the controller and must be configured before using the Controller.
+func (c *Controller) SetDiagnosticWriter(w io.Writer) {
+	if w == nil {
+		w = io.Discard
+	}
+	c.diagnostics = w
+}
 func sleep(ctx context.Context, d time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -157,22 +171,38 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// Pace every bus transaction, including retries and status reads, to at most 100/s.
+// Wait at least 10 ms AFTER the previous transfer completes. Start-to-start
+// pacing is insufficient: a slow ioctl would consume the MCU's settling time.
 func (c *Controller) pace(ctx context.Context) error {
-	if err := sleep(ctx, time.Until(c.next)); err != nil {
+	return sleep(ctx, time.Until(c.next))
+}
+func (c *Controller) completed() { c.next = time.Now().Add(10 * time.Millisecond) }
+func (c *Controller) readStatus(ctx context.Context, id byte) ([]byte, error) {
+	if err := c.pace(ctx); err != nil {
+		return nil, err
+	}
+	defer c.completed()
+	return c.bus.ReadStatus(id)
+}
+func (c *Controller) writeFrame(ctx context.Context, id byte, frame [12]byte) error {
+	if err := c.pace(ctx); err != nil {
 		return err
 	}
-	c.next = time.Now().Add(10 * time.Millisecond)
-	return nil
+	defer c.completed()
+	return c.bus.WriteFrame(id, frame)
+}
+func (c *Controller) readAck(ctx context.Context) (byte, error) {
+	if err := c.pace(ctx); err != nil {
+		return 0, err
+	}
+	defer c.completed()
+	return c.bus.ReadAck()
 }
 func (c *Controller) Refresh(ctx context.Context) ([4]State, error) {
 	var states [4]State
 	for id := range states {
 		for attempt := 0; attempt < 3; attempt++ {
-			if err := c.pace(ctx); err != nil {
-				return states, err
-			}
-			b, err := c.bus.ReadStatus(byte(id))
+			b, err := c.readStatus(ctx, byte(id))
 			if err != nil {
 				return states, fmt.Errorf("%s status: %w", Names[id], err)
 			}
@@ -192,37 +222,104 @@ func (c *Controller) Refresh(ctx context.Context) ([4]State, error) {
 	c.known = [4]bool{true, true, true, true}
 	return states, nil
 }
+
+// commandMatches checks only the field addressed by this command. Other
+// fields may still await their own command in Apply. Mode timing is meaningful
+// only for blink/breath; status omits timings for steady/off modes.
+func commandMatches(s State, cmd byte, p [4]byte) bool {
+	switch cmd {
+	case 1:
+		return s.Brightness == int(p[0])
+	case 2:
+		return s.Color == (RGB{int(p[0]), int(p[1]), int(p[2])})
+	case 3:
+		return (p[0] == 0 && s.Mode == "off") || (p[0] == 1 && s.Mode == "on")
+	case 4, 5:
+		mode := "blink"
+		if cmd == 5 {
+			mode = "breath"
+		}
+		total, on := int(p[0])<<8|int(p[1]), int(p[2])<<8|int(p[3])
+		return s.Mode == mode && s.OnMS == on && s.OffMS == total-on
+	}
+	return false
+}
+
+// An ACK byte of zero does not establish whether the command took effect.
+// Require two consecutive checksum-valid matching reads, within three reads,
+// before treating an unacknowledged command as applied. Never retry transport
+// errors or accept unknown modes/timings. A stale single response is insufficient.
+func (c *Controller) confirmCommand(ctx context.Context, id, cmd byte, p [4]byte) (bool, State, error) {
+	var last State
+	matched := 0
+	for attempt := 0; attempt < 3; attempt++ {
+		raw, err := c.readStatus(ctx, id)
+		if err != nil {
+			return false, last, err
+		}
+		s, err := DecodeStatus(raw)
+		if err == nil {
+			err = s.Validate()
+		}
+		if err != nil {
+			matched = 0
+			if errors.Is(err, errStatusChecksum) && attempt < 2 {
+				continue
+			}
+			return false, last, err
+		}
+		last = s
+		if commandMatches(s, cmd, p) {
+			matched++
+		} else {
+			matched = 0
+		}
+		if matched == 2 {
+			return true, last, nil
+		}
+	}
+	return false, last, nil
+}
+
 func (c *Controller) command(ctx context.Context, id, cmd byte, p [4]byte) error {
 	frame, err := Frame(id, cmd, p)
 	if err != nil {
 		return err
 	}
-	// Retry an explicit NACK only. Transport errors have unknown effects: stop immediately.
-	for attempt := 0; attempt < 3; attempt++ {
-		if err = c.pace(ctx); err != nil {
-			return err
+	var observed State
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err = c.writeFrame(ctx, id, frame); err != nil {
+			return fmt.Errorf("command=0x%02x params=% x attempt=%d write: %w", cmd, p, attempt, err)
 		}
-		if err = c.bus.WriteFrame(id, frame); err != nil {
-			return err
-		}
-		if err = c.pace(ctx); err != nil {
-			return err
-		}
-		ack, e := c.bus.ReadAck()
-		if e != nil {
-			return e
+		ack, err := c.readAck(ctx)
+		if err != nil {
+			return fmt.Errorf("command=0x%02x params=% x attempt=%d ACK read: %w", cmd, p, attempt, err)
 		}
 		if ack == 1 {
 			return nil
 		}
 		if ack != 0 {
-			return fmt.Errorf("unexpected controller acknowledgement %#x", ack)
+			return fmt.Errorf("command=0x%02x params=% x attempt=%d unexpected ACK=0x%02x", cmd, p, attempt, ack)
 		}
+		// Allow settling, then read rather than blindly sending a duplicate.
 		if err = sleep(ctx, 50*time.Millisecond); err != nil {
 			return err
 		}
+		var confirmed bool
+		confirmed, observed, err = c.confirmCommand(ctx, id, cmd, p)
+		if err != nil {
+			return fmt.Errorf("command=0x%02x params=% x attempt=%d ACK=0x00 readback: %w", cmd, p, attempt, err)
+		}
+		if confirmed {
+			c.verifiedWithoutACK++
+			if now := time.Now(); !now.Before(c.nextDiagnostic) {
+				fmt.Fprintf(c.diagnostics, "ug-led: %s command=0x%02x params=% x ACK=0x00; two status reads confirmed setting (total readback recoveries=%d)\n", Names[id], cmd, p, c.verifiedWithoutACK)
+				c.nextDiagnostic = now.Add(30 * time.Second)
+			}
+			return nil
+		}
 	}
-	return errors.New("LED controller rejected command after three attempts")
+	return fmt.Errorf("command=0x%02x params=% x unconfirmed after three attempts (ACK=0x00, last readback=%+v)", cmd, p, observed)
 }
 func (c *Controller) Apply(ctx context.Context, id int, s State) error {
 	if id < 0 || id >= len(Names) {
@@ -279,10 +376,7 @@ func (c *Controller) Diagnose(ctx context.Context) ([]StatusReport, error) {
 	reports := make([]StatusReport, 0, 4)
 	invalid := false
 	for id, name := range Names {
-		if e := c.pace(ctx); e != nil {
-			return reports, e
-		}
-		b, e := c.bus.ReadStatus(byte(id))
+		b, e := c.readStatus(ctx, byte(id))
 		if e != nil {
 			return reports, fmt.Errorf("%s status read: %w", name, e)
 		}

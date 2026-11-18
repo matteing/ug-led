@@ -160,3 +160,30 @@ path and physical-node link, matching i2c-dev parent, Intel PCI vendor/location,
 DesignWare adapter name and MCU identity. It does not hardcode a Linux bus
 number, scan other buses/addresses, or assume every DesignWare/EM board is safe.
 The raw DSDT and machine-specific dump remain outside the public repository.
+
+## Acknowledgement handling and settling time (0.2.2)
+
+A deployed SUB2 unit stopped three times on 2026-11-18 after three zero-valued
+ACK bytes. These were successful I2C transfers returning `0x00`, not transport
+NACK errors. Version 0.2.1 logged this as a rejected command but did not capture
+the command or subsequent state, so those logs cannot establish whether the
+setting actually took effect. The underlying cause remains unconfirmed.
+
+Both inspected vendor drivers wait **after** each write returns before reading
+ACK: UGOS 1.17 at `.text+0x1500` and 1.21 at `.text+0x14bc` request
+`usleep_range_state(1500, 2500, 2)` in the blink path; unsuccessful ACKs cause a
+30 ms delay before another write. Our former start-to-start 10 ms pacing could
+leave no settling interval after an ioctl taking 10 ms or longer. Version 0.2.2
+waits at least 10 ms after every transfer finishes, including status reads.
+This is a verified software timing defect, not proof it caused all three stops.
+
+A zero ACK now causes a 50 ms settling wait and at most three read-only status
+checks. Two consecutive checksum-valid responses must match the specific
+brightness, RGB or mode/timing requested. Only then is the command considered
+applied without resending it. One matching or corrupt response is insufficient.
+A mismatch can cause another attempt, still capped at three writes total.
+Transport errors, unexpected ACK bytes and invalid status formats stop control.
+No new command types or firmware operations are introduced, and service
+restarts remain manual. Readback-confirmed missing ACKs are logged with a
+cumulative count at most every 30 seconds; failures include command, parameters
+and available readback. The change requires live validation on the affected NAS.

@@ -157,6 +157,7 @@ func execute(args []string, out io.Writer) error {
 	}
 	defer bus.Close()
 	ctl := led.NewController(bus)
+	ctl.SetDiagnosticWriter(os.Stderr)
 	if args[0] == "status" && *rawStatus {
 		reports, e := ctl.Diagnose(ctx)
 		if outputErr := encode(reports); outputErr != nil {

@@ -182,6 +182,14 @@ dropped and the filesystem is read-only. Device access is restricted to I²C
 character devices, with the application selecting only the verified Intel
 I801 or ACPI-linked DesignWare adapter and address `0x3a`. This is not a kernel-enforced per-address sandbox.
 
+Version 0.2.2 waits 10 ms after each bus transfer completes. A zero command
+acknowledgement triggers bounded status reads: two consecutive valid responses
+must confirm the requested setting before continuing without a duplicate write.
+Confirmed missing acknowledgements are logged at most every 30 seconds with a
+cumulative count. Unconfirmed commands still stop after at most three writes;
+transport errors and unexpected responses stop immediately. See the
+[runtime correction and remaining acceptance](docs/validation.md#runtime-acknowledgement-correction-in-022).
+
 On controller failure the service stops and requires an operator restart;
 it does not enter an automatic hardware retry loop. A normal SIGTERM attempts
 to restore the initial validated LED states within three seconds. A kill,

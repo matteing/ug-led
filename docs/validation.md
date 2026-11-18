@@ -99,3 +99,25 @@ SUB2 BIOS/ACPI/PCI matching, MCU identity byte order/rejection, bounded checksum
 rereads, immediate transport failure, and raw diagnostics preserving invalid
 bytes without writes. Discovery and readback are validated; visible color/bay
 mapping, actual write acknowledgements and lifecycle acceptance remain separate.
+
+## Runtime acknowledgement correction in 0.2.2
+
+The 0.2.1 deployment passed a dim-blue power LED write/readback check but later
+stopped three times with zero ACK bytes: after approximately 24m42s, 8m17s and
+2m34s of runtime. These failures invalidate any inference of long-term stability
+from the earlier short samples. No automatic restart loop was enabled.
+
+Regression tests cover settling after slow transfers, all five commands with
+missing ACK but confirmed state, persistent mismatch, stale/nonconsecutive or
+corrupt readback, mode/timing comparison, transport failures and unexpected ACKs,
+cache invalidation and bounded diagnostics. The slow-transfer regression fails
+against 0.2.1: one measured gap was 1.875 microseconds after a simulated 20 ms
+transfer, rather than the intended 10 ms. The corrected implementation passes.
+No hardware fault injection is used.
+
+The corrected timing and readback fallback must still be tested on the affected
+unit. Observe normal workload beyond the previous 25-minute failure window,
+check missing-ACK diagnostics and kernel logs, and then conduct a longer soak.
+A successful build or short run alone does not establish the underlying MCU
+cause or long-term reliability. Physical bay mapping and reboot acceptance
+remain separate checks.
